@@ -1,0 +1,9 @@
+transformers
+datasets
+torch
+torchvision
+pandas
+scikit-learn
+pillow
+mlflow
+python-dotenv
