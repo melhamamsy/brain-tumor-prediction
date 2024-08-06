@@ -20,6 +20,14 @@ ID_2_CLASS_DICT = {
     3: "glioma",
 }
 
+PREFIX_2_CLASS_DICT = {
+    "no": "notumor",
+    "pi": "pituitary",
+    "me": "meningioma",
+    "gl": "glioma",
+}
+
+
 def load_images(data_dir="data", type="Training", image_names=None, seed=None, **kwargs):
     """
     Load a specified number of images from each category and return them as a list of tuples
