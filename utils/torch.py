@@ -1,6 +1,6 @@
 import os
 from torchvision import datasets, transforms
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import random_split
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
@@ -13,8 +13,11 @@ from utils.image import (CLASS_2_ID_DICT, ID_2_CLASS_DICT,
 class CustomDataset(torch.utils.data.Dataset):
     """
     """
-    def __init__(self, root_dir, feature_extractor):
-        self.dataset = datasets.ImageFolder(root=root_dir)
+    def __init__(self, root_dir, is_vit=True, **kwargs):
+        self.dataset = datasets.ImageFolder(
+            root=root_dir,
+            transform=kwargs.get('transform')
+        )
         self.dataset.classes = list(CLASS_2_ID_DICT.keys())
         self.dataset.class_to_idx = CLASS_2_ID_DICT
         
@@ -25,18 +28,24 @@ class CustomDataset(torch.utils.data.Dataset):
 
             self.dataset.samples[i] = (path, CLASS_2_ID_DICT[label])
         
-        self.feature_extractor = feature_extractor
+        self.is_vit = is_vit
+        
+        for key, value in kwargs.items():
+            setattr(self, key, value)
 
     def __len__(self):
         return len(self.dataset)
 
     def __getitem__(self, idx):
-        image, label = self.dataset[idx]
-        image = image.convert("RGB")
-        inputs = self.feature_extractor(images=image, return_tensors="pt")
-        inputs = {key: val.squeeze() for key, val in inputs.items()}  # Remove batch dimension
-        inputs['labels'] = torch.tensor(label)
-        return inputs
+        if self.is_vit:
+            image, label = self.dataset[idx]
+            image = image.convert("RGB")
+            inputs = self.feature_extractor(images=image, return_tensors="pt")
+            inputs = {key: val.squeeze() for key, val in inputs.items()}  # Remove batch dimension
+            inputs['labels'] = torch.tensor(label)
+            return inputs
+        else:
+            return self.dataset[idx]
     
     def train_val_split(self, train_perc=0.8, seed=42):
         train_size = int(train_perc * len(self))
@@ -86,7 +95,7 @@ def get_dataset_counts(dataset):
     return data_counts_dict
 
 
-def prepare_datasets(data_dir="data", batch_size=32, train_perc=0.8):
+def prepare_datasets(data_dir="data", is_vit=False):
     """
     """
     transform = transforms.Compose([
@@ -95,25 +104,18 @@ def prepare_datasets(data_dir="data", batch_size=32, train_perc=0.8):
         transforms.Normalize((0.5,), (0.5,))
     ])
 
-    dataset = datasets.ImageFolder(root=os.path.join(data_dir, "Training"), transform=transform)
-    test_dataset = datasets.ImageFolder(root=os.path.join(data_dir, "Testing"), transform=transform)
+    dataset = CustomDataset(
+        root_dir=os.path.join(data_dir, "Training"),
+        is_vit=is_vit,
+        transform=transform,
+    )
+    test_dataset = CustomDataset(
+        root_dir=os.path.join(data_dir, "Testing"),
+        is_vit=is_vit,
+        transform=transform,
+    )
 
-    # Apply class to ID mapping
-    dataset.classes = list(CLASS_2_ID_DICT.keys())
-    dataset.class_to_idx = CLASS_2_ID_DICT
-    test_dataset.classes = list(CLASS_2_ID_DICT.keys())
-    test_dataset.class_to_idx = CLASS_2_ID_DICT
-    
-    # Split dataset into training and validation
-    train_size = int(train_perc * len(dataset))
-    val_size = len(dataset) - train_size
-    train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
-    
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
-    
-    return train_loader, val_loader, test_loader
+    return dataset, test_dataset
 
 
 def train_model(model, train_loader, val_loader, epochs=10, learning_rate=0.001):
@@ -198,12 +200,17 @@ def get_misclassified_images(model, data_loader, n_error=None, device="cpu", ret
 
     with torch.no_grad():
         for k, loaded_data in enumerate(tqdm(data_loader)):
-            images = loaded_data['pixel_values']
-            labels = loaded_data['labels']
-                       
-            images, labels = images.to(device), labels.to(device)
-            outputs = model(images)
-            _, predicted = torch.max(outputs.logits, 1)
+            if data_loader.dataset.dataset.is_vit:
+                images = loaded_data['pixel_values']
+                labels = loaded_data['labels'] 
+                images, labels = images.to(device), labels.to(device)
+                outputs = model(images)
+                _, predicted = torch.max(outputs.logits, 1)
+            else:
+                images, labels = loaded_data
+                images, labels = images.to(device), labels.to(device)
+                outputs = model(images)
+                _, predicted = torch.max(outputs.data, 1)
             
             # Collect misclassified images
             for i in range(len(labels)):
